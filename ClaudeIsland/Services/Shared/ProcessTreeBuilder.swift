@@ -22,6 +22,14 @@ struct ProcessInfo: Sendable {
     }
 }
 
+struct ActiveCodexProcess: Sendable {
+    let sessionId: String
+    let pid: Int
+    let tty: String?
+    let cwd: String?
+    let isInTmux: Bool
+}
+
 /// Builds and queries the system process tree
 struct ProcessTreeBuilder: Sendable {
     nonisolated static let shared = ProcessTreeBuilder()
@@ -173,6 +181,10 @@ struct ProcessTreeBuilder: Sendable {
     /// Returns the most likely active Codex session ID per live Codex process by
     /// inspecting the transcript files that process currently has open.
     nonisolated func activeCodexSessionIds() -> Set<String> {
+        Set(activeCodexProcessesBySessionId().keys)
+    }
+
+    nonisolated func activeCodexProcessesBySessionId() -> [String: ActiveCodexProcess] {
         let tree = buildTree()
         let codexPids = tree.values.compactMap { info -> Int? in
             let executable = info.command
@@ -187,14 +199,39 @@ struct ProcessTreeBuilder: Sendable {
             return executable == "codex" ? info.pid : nil
         }
 
-        var sessionIds = Set<String>()
+        var processes: [String: ActiveCodexProcess] = [:]
         for pid in codexPids {
-            if let sessionId = activeCodexSessionId(forPid: pid) {
-                sessionIds.insert(sessionId)
+            guard let sessionId = activeCodexSessionId(forPid: pid) else { continue }
+
+            let info = tree[pid]
+            let process = ActiveCodexProcess(
+                sessionId: sessionId,
+                pid: pid,
+                tty: normalizeTTY(info?.tty),
+                cwd: getWorkingDirectory(forPid: pid),
+                isInTmux: isInTmux(pid: pid, tree: tree)
+            )
+
+            if let existing = processes[sessionId] {
+                processes[sessionId] = preferredCodexProcess(existing, process)
+            } else {
+                processes[sessionId] = process
             }
         }
 
-        return sessionIds
+        return processes
+    }
+
+    nonisolated func activeCodexProcess(for session: SessionState) -> ActiveCodexProcess? {
+        let processes = activeCodexProcessesBySessionId()
+
+        if let process = processes[session.sessionId] {
+            return process
+        }
+
+        let cwdMatches = processes.values.filter { $0.cwd == session.cwd }
+        guard cwdMatches.count == 1 else { return nil }
+        return cwdMatches[0]
     }
 
     private nonisolated func activeCodexSessionId(forPid pid: Int) -> String? {
@@ -227,5 +264,30 @@ struct ProcessTreeBuilder: Sendable {
             return nil
         }
         return String(filename[range])
+    }
+
+    private nonisolated func preferredCodexProcess(_ lhs: ActiveCodexProcess, _ rhs: ActiveCodexProcess) -> ActiveCodexProcess {
+        if lhs.tty == nil, rhs.tty != nil {
+            return rhs
+        }
+
+        if lhs.cwd == nil, rhs.cwd != nil {
+            return rhs
+        }
+
+        return rhs.pid > lhs.pid ? rhs : lhs
+    }
+
+    private nonisolated func normalizeTTY(_ tty: String?) -> String? {
+        guard let tty else { return nil }
+
+        let trimmed = tty.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != "??" else { return nil }
+
+        if trimmed.hasPrefix("/dev/") {
+            return String(trimmed.dropFirst(5))
+        }
+
+        return trimmed
     }
 }

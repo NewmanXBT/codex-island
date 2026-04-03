@@ -129,6 +129,13 @@ actor SessionStore {
         if let existing = sessions[discovered.sessionId] {
             var updated = existing
             updated.lastActivity = max(existing.lastActivity, discovered.lastActivity)
+            if let pid = discovered.pid {
+                updated.pid = pid
+            }
+            if let tty = discovered.tty {
+                updated.tty = tty
+            }
+            updated.isInTmux = discovered.isInTmux
             if updated.conversationInfo != discovered.conversationInfo {
                 updated.conversationInfo = discovered.conversationInfo
             }
@@ -616,11 +623,19 @@ actor SessionStore {
         guard var session = sessions[payload.sessionId] else { return }
 
         // Update conversationInfo from JSONL (summary, lastMessage, etc.)
-        let conversationInfo = await ConversationParser.shared.parse(
-            sessionId: payload.sessionId,
-            cwd: session.cwd
-        )
-        session.conversationInfo = conversationInfo
+        if session.provider == .codex {
+            let parsed = await CodexConversationParser.shared.loadConversation(sessionId: payload.sessionId)
+            session.conversationInfo = parsed.conversationInfo
+            if session.phase == .idle {
+                session.phase = parsed.phase
+            }
+        } else {
+            let conversationInfo = await ConversationParser.shared.parse(
+                sessionId: payload.sessionId,
+                cwd: session.cwd
+            )
+            session.conversationInfo = conversationInfo
+        }
 
         // Handle /clear reconciliation - remove items that no longer exist in parser state
         if session.needsClearReconciliation {

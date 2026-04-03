@@ -24,6 +24,8 @@ struct ChatView: View {
     @State private var newMessageCount: Int = 0
     @State private var previousHistoryCount: Int = 0
     @State private var isBottomVisible: Bool = true
+    @State private var sendError: String?
+    @State private var isSendingMessage = false
     @FocusState private var isInputFocused: Bool
 
     init(sessionId: String, initialSession: SessionState, sessionMonitor: SessionMonitor, viewModel: NotchViewModel) {
@@ -369,36 +371,45 @@ struct ChatView: View {
     }
 
     private var inputBar: some View {
-        HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message \(providerName)..." : "Live \(providerName) session required", text: $inputText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
-                .focused($isInputFocused)
-                .disabled(!canSendMessages)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 20)
-                        .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 20)
-                                .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
-                        )
-                )
-                .onSubmit {
-                    sendMessage()
-                }
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                TextField(canSendMessages ? "Message \(providerName)..." : "Live \(providerName) terminal required", text: $inputText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
+                    .focused($isInputFocused)
+                    .disabled(!canSendMessages || isSendingMessage)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 20)
+                            .fill(Color.white.opacity(canSendMessages ? 0.08 : 0.04))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 20)
+                                    .strokeBorder(Color.white.opacity(sendError == nil ? 0.1 : 0.28), lineWidth: 1)
+                            )
+                    )
+                    .onSubmit {
+                        sendMessage()
+                    }
 
-            Button {
-                sendMessage()
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(!canSendMessages || inputText.isEmpty ? .white.opacity(0.2) : .white.opacity(0.9))
+                Button {
+                    sendMessage()
+                } label: {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundColor(!canSendMessages || inputText.isEmpty || isSendingMessage ? .white.opacity(0.2) : .white.opacity(0.9))
+                }
+                .buttonStyle(.plain)
+                .disabled(!canSendMessages || inputText.isEmpty || isSendingMessage)
             }
-            .buttonStyle(.plain)
-            .disabled(!canSendMessages || inputText.isEmpty)
+
+            if let sendError {
+                Text(sendError)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.white.opacity(0.55))
+                    .padding(.leading, 8)
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -478,29 +489,37 @@ struct ChatView: View {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
 
-        inputText = ""
-
         // Resume autoscroll when user sends a message
         resumeAutoscroll()
         shouldScrollToBottom = true
 
-        // Don't add to history here - it will be synced from JSONL when UserPromptSubmit event fires
+        sendError = nil
+        isSendingMessage = true
+
         Task {
-            await sendToSession(text)
+            let sent = await sendToSession(text)
+            await MainActor.run {
+                isSendingMessage = false
+                if sent {
+                    inputText = ""
+                } else {
+                    sendError = "Could not send message to the live terminal session."
+                }
+            }
         }
     }
 
-    private func sendToSession(_ text: String) async {
+    private func sendToSession(_ text: String) async -> Bool {
         if session.isInTmux {
-            guard let tty = session.tty else { return }
+            guard let tty = session.tty else { return false }
             if let target = await findTmuxTarget(tty: tty) {
-                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+                return await ToolApprovalHandler.shared.sendMessage(text, to: target)
             }
-            return
+            return false
         }
 
-        guard session.provider == .codex else { return }
-        _ = await TerminalMessageSender.shared.sendMessage(text, to: session)
+        guard session.provider == .codex else { return false }
+        return await TerminalMessageSender.shared.sendMessage(text, to: session)
     }
 
     private func findTmuxTarget(tty: String) async -> TmuxTarget? {

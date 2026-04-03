@@ -23,17 +23,14 @@ actor TerminalMessageSender {
             return true
         }
 
-        let focused: Bool
         if let pid = session.pid {
-            focused = await YabaiController.shared.focusWindow(forClaudePid: pid)
+            _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
         } else {
-            focused = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
+            _ = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
         }
 
-        guard focused else { return false }
-
         terminal.application.activate(options: [.activateIgnoringOtherApps])
-        try? await Task.sleep(for: .milliseconds(120))
+        try? await Task.sleep(for: .milliseconds(220))
 
         guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == terminal.bundleIdentifier else {
             return false
@@ -42,8 +39,10 @@ actor TerminalMessageSender {
         return await sendWithSystemEvents(trimmed)
     }
 
-    private func terminalTarget(for session: SessionState) -> TerminalTarget? {
-        guard let pid = session.pid else { return nil }
+    private nonisolated func terminalTarget(for session: SessionState) -> TerminalTarget? {
+        let resolvedProcess = ProcessTreeBuilder.shared.activeCodexProcess(for: session)
+        let pid = session.pid ?? resolvedProcess?.pid
+        guard let pid else { return nil }
 
         let tree = ProcessTreeBuilder.shared.buildTree()
         guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: pid, tree: tree),
@@ -59,11 +58,13 @@ actor TerminalMessageSender {
     }
 
     private func sendDirectMessage(_ message: String, to target: TerminalTarget, tty: String) async -> Bool {
+        let normalizedTTY = Self.normalizeTTY(tty)
+
         switch target.bundleIdentifier {
         case "com.apple.Terminal":
-            return await runAppleScript(Self.terminalScript, arguments: [tty, message])
+            return await runAppleScript(Self.terminalScript, arguments: [normalizedTTY, message])
         case "com.googlecode.iterm2":
-            return await runAppleScript(Self.iTermScript, arguments: [tty, message])
+            return await runAppleScript(Self.iTermScript, arguments: [normalizedTTY, message])
         default:
             return false
         }
@@ -92,6 +93,14 @@ actor TerminalMessageSender {
         let application: NSRunningApplication
     }
 
+    private nonisolated static func normalizeTTY(_ tty: String) -> String {
+        let trimmed = tty.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("/dev/") {
+            return String(trimmed.dropFirst(5))
+        }
+        return trimmed
+    }
+
     private static let terminalScript = """
     on run argv
         set targetTTY to item 1 of argv
@@ -100,7 +109,8 @@ actor TerminalMessageSender {
             repeat with aWindow in windows
                 repeat with aTab in tabs of aWindow
                     try
-                        if tty of aTab is targetTTY then
+                        set ttyValue to tty of aTab
+                        if ttyValue is targetTTY or ttyValue is "/dev/" & targetTTY then
                             do script targetMessage in aTab
                             return "ok"
                         end if
@@ -121,7 +131,8 @@ actor TerminalMessageSender {
                 repeat with aTab in tabs of aWindow
                     repeat with aSession in sessions of aTab
                         try
-                            if tty of aSession is targetTTY then
+                            set ttyValue to tty of aSession
+                            if ttyValue is targetTTY or ttyValue is "/dev/" & targetTTY then
                                 tell aSession to write text targetMessage
                                 return "ok"
                             end if

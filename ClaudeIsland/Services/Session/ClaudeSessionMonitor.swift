@@ -150,10 +150,33 @@ class SessionMonitor: ObservableObject {
     }
 
     private func refreshCodexSessions() async {
-        let activeSessionIds = ProcessTreeBuilder.shared.activeCodexSessionIds()
+        let activeProcesses = ProcessTreeBuilder.shared.activeCodexProcessesBySessionId()
         let discoveredCodexSessions = await CodexSessionScanner.shared.scanRecentSessions()
 
-        let sessionsToRefresh = discoveredCodexSessions.filter { activeSessionIds.contains($0.sessionId) }
+        let sessionsToRefresh = discoveredCodexSessions.compactMap { session -> SessionState? in
+            guard let activeProcess = activeProcesses[session.sessionId] else {
+                return nil
+            }
+
+            return SessionState(
+                sessionId: session.sessionId,
+                cwd: session.cwd,
+                projectName: session.projectName,
+                provider: session.provider,
+                pid: activeProcess.pid,
+                tty: activeProcess.tty,
+                isInTmux: activeProcess.isInTmux,
+                phase: session.phase,
+                chatItems: session.chatItems,
+                toolTracker: session.toolTracker,
+                subagentState: session.subagentState,
+                conversationInfo: session.conversationInfo,
+                needsClearReconciliation: session.needsClearReconciliation,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            )
+        }
+
         for session in sessionsToRefresh {
             await SessionStore.shared.process(.sessionDiscovered(session))
             await SessionStore.shared.process(.loadHistory(sessionId: session.sessionId, cwd: session.cwd))
