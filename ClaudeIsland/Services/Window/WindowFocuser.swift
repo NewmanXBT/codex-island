@@ -41,4 +41,21 @@ actor WindowFocuser {
 
         return false
     }
+
+    /// Focus any visible window owned by a terminal process
+    func focusTerminalWindow(terminalPid: Int, windows: [YabaiWindow]) async -> Bool {
+        if let focusedWindow = windows.first(where: { $0.pid == terminalPid && $0.hasFocus }) {
+            return await focusWindow(id: focusedWindow.id)
+        }
+
+        if let visibleWindow = windows.first(where: { $0.pid == terminalPid && $0.isVisible }) {
+            return await focusWindow(id: visibleWindow.id)
+        }
+
+        if let anyWindow = windows.first(where: { $0.pid == terminalPid }) {
+            return await focusWindow(id: anyWindow.id)
+        }
+
+        return false
+    }
 }

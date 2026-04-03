@@ -39,10 +39,7 @@ class AgentFileWatcher {
         self.taskToolId = taskToolId
         self.agentId = agentId
         self.cwd = cwd
-
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-")
-                            .replacingOccurrences(of: ".", with: "-")
-        self.filePath = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/agent-" + agentId + ".jsonl"
+        self.filePath = ConversationParser.agentFilePath(agentId: agentId, cwd: cwd)
     }
 
     /// Start watching the agent file

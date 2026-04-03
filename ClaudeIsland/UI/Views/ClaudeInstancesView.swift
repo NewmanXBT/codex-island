@@ -9,7 +9,7 @@ import Combine
 import SwiftUI
 
 struct ClaudeInstancesView: View {
-    @ObservedObject var sessionMonitor: ClaudeSessionMonitor
+    @ObservedObject var sessionMonitor: SessionMonitor
     @ObservedObject var viewModel: NotchViewModel
 
     var body: some View {
@@ -28,7 +28,7 @@ struct ClaudeInstancesView: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundColor(.white.opacity(0.4))
 
-            Text("Run claude in terminal")
+            Text("Run an agent in terminal")
                 .font(.system(size: 11))
                 .foregroundColor(.white.opacity(0.25))
         }
@@ -88,8 +88,6 @@ struct ClaudeInstancesView: View {
     // MARK: - Actions
 
     private func focusSession(_ session: SessionState) {
-        guard session.isInTmux else { return }
-
         Task {
             if let pid = session.pid {
                 _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
@@ -153,10 +151,14 @@ struct InstanceRow: View {
 
             // Text content
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.displayTitle)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(.white)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(session.displayTitle)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+
+                    ProviderBadge(provider: session.provider)
+                }
 
                 // Show tool call when waiting for approval, otherwise last activity
                 if isWaitingForApproval, let toolName = session.pendingToolName {
@@ -320,6 +322,26 @@ struct InstanceRow: View {
         }
     }
 
+}
+
+struct ProviderBadge: View {
+    let provider: ProviderKind
+
+    var body: some View {
+        Text(provider.displayName.uppercased())
+            .font(.system(size: 8, weight: .bold, design: .monospaced))
+            .foregroundColor(.white.opacity(0.6))
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(Color.white.opacity(0.08))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+            )
+    }
 }
 
 // MARK: - Inline Approval Buttons

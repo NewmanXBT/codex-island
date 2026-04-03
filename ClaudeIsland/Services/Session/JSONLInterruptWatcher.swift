@@ -39,9 +39,7 @@ class JSONLInterruptWatcher {
 
     init(sessionId: String, cwd: String) {
         self.sessionId = sessionId
-        let projectDir = cwd.replacingOccurrences(of: "/", with: "-")
-                            .replacingOccurrences(of: ".", with: "-")
-        self.filePath = NSHomeDirectory() + "/.claude/projects/" + projectDir + "/" + sessionId + ".jsonl"
+        self.filePath = ConversationParser.sessionFilePath(sessionId: sessionId, cwd: cwd)
     }
 
     /// Start watching the JSONL file for interrupts

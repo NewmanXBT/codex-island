@@ -8,6 +8,18 @@
 
 import Foundation
 
+enum ProviderKind: String, Codable, Sendable, Equatable, CaseIterable {
+    case claude
+    case codex
+
+    var displayName: String {
+        switch self {
+        case .claude: return "Claude"
+        case .codex: return "Codex"
+        }
+    }
+}
+
 /// Complete state for a single Claude session
 /// This is the single source of truth - all state reads and writes go through SessionStore
 struct SessionState: Equatable, Identifiable, Sendable {
@@ -16,6 +28,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
     let sessionId: String
     let cwd: String
     let projectName: String
+    let provider: ProviderKind
 
     // MARK: - Instance Metadata
 
@@ -68,6 +81,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         sessionId: String,
         cwd: String,
         projectName: String? = nil,
+        provider: ProviderKind = .claude,
         pid: Int? = nil,
         tty: String? = nil,
         isInTmux: Bool = false,
@@ -86,6 +100,7 @@ struct SessionState: Equatable, Identifiable, Sendable {
         self.sessionId = sessionId
         self.cwd = cwd
         self.projectName = projectName ?? URL(fileURLWithPath: cwd).lastPathComponent
+        self.provider = provider
         self.pid = pid
         self.tty = tty
         self.isInTmux = isInTmux
@@ -126,7 +141,17 @@ struct SessionState: Equatable, Identifiable, Sendable {
 
     /// Display title: summary > first user message > project name
     var displayTitle: String {
-        conversationInfo.summary ?? conversationInfo.firstUserMessage ?? projectName
+        formattedDisplayTitle(
+            summary: conversationInfo.summary,
+            firstUserMessage: conversationInfo.firstUserMessage,
+            projectName: projectName,
+            provider: provider
+        )
+    }
+
+    /// Provider label for badges/copy
+    var providerDisplayName: String {
+        provider.displayName
     }
 
     /// Best hint for matching window title
@@ -183,6 +208,89 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var canInteract: Bool {
         phase.needsAttention
     }
+}
+
+private func formattedDisplayTitle(
+    summary: String?,
+    firstUserMessage: String?,
+    projectName: String,
+    provider: ProviderKind
+) -> String {
+    let cleanedSummary = cleanedTitleCandidate(summary)
+    let cleanedFirstMessage = cleanedTitleCandidate(firstUserMessage)
+
+    switch provider {
+    case .claude:
+        return cleanedSummary ?? cleanedFirstMessage ?? projectName
+    case .codex:
+        if let cleanedSummary, cleanedSummary.caseInsensitiveCompare(projectName) != .orderedSame {
+            return "\(projectName) · \(cleanedSummary)"
+        }
+        if let cleanedFirstMessage, cleanedFirstMessage.caseInsensitiveCompare(projectName) != .orderedSame {
+            return "\(projectName) · \(cleanedFirstMessage)"
+        }
+        return projectName
+    }
+}
+
+private func cleanedTitleCandidate(_ raw: String?) -> String? {
+    guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+        return nil
+    }
+
+    text = text.replacingOccurrences(of: "\n", with: " ")
+    text = text.replacingOccurrences(of: "\t", with: " ")
+
+    while text.contains("  ") {
+        text = text.replacingOccurrences(of: "  ", with: " ")
+    }
+
+    let separators = [". ", "。", ":", " - ", " | "]
+    for separator in separators {
+        if let range = text.range(of: separator) {
+            let prefix = String(text[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if prefix.count >= 8 {
+                text = prefix
+                break
+            }
+        }
+    }
+
+    let noisyPrefixes = [
+        "you need to",
+        "please",
+        "help me",
+        "can you",
+        "could you",
+        "i want to",
+        "we need to",
+        "take this repo",
+        "fix this",
+        "implement",
+        "another language model started"
+    ]
+
+    let lowercased = text.lowercased()
+    for prefix in noisyPrefixes {
+        if lowercased.hasPrefix(prefix) {
+            text = String(text.dropFirst(prefix.count)).trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
+            break
+        }
+    }
+
+    if text.hasPrefix("http://") || text.hasPrefix("https://") || text.hasPrefix("{") || text.hasPrefix("#") {
+        return nil
+    }
+
+    if text.count < 6 {
+        return nil
+    }
+
+    if text.count > 44 {
+        text = String(text.prefix(41)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
+    }
+
+    return text.isEmpty ? nil : text
 }
 
 // MARK: - Tool Tracker

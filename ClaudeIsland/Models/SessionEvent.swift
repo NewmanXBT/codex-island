@@ -11,6 +11,12 @@ import Foundation
 /// All events that can affect session state
 /// This is the single entry point for state mutations
 enum SessionEvent: Sendable {
+    /// A session was discovered outside the Claude hook path
+    case sessionDiscovered(SessionState)
+
+    /// A live OTLP update was received from Codex
+    case telemetryUpdated(CodexTelemetryUpdate)
+
     // MARK: - Hook Events (from HookSocketServer)
 
     /// A hook event was received from Claude Code
@@ -183,6 +189,10 @@ extension HookEvent {
 extension SessionEvent: CustomStringConvertible {
     nonisolated var description: String {
         switch self {
+        case .sessionDiscovered(let session):
+            return "sessionDiscovered(\(session.providerDisplayName), session: \(session.sessionId.prefix(8)))"
+        case .telemetryUpdated(let update):
+            return "telemetryUpdated(session: \(update.sessionId.prefix(8)), phase: \(String(describing: update.phase)))"
         case .hookReceived(let event):
             return "hookReceived(\(event.event), session: \(event.sessionId.prefix(8)))"
         case .permissionApproved(let sessionId, let toolUseId):

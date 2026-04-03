@@ -15,7 +15,7 @@ actor YabaiController {
 
     // MARK: - Public API
 
-    /// Focus the terminal window for a given Claude PID (tmux only)
+    /// Focus the terminal window for a given session PID
     func focusWindow(forClaudePid claudePid: Int) async -> Bool {
         guard await WindowFinder.shared.isYabaiAvailable() else {
             return false
@@ -23,6 +23,13 @@ actor YabaiController {
 
         let windows = await WindowFinder.shared.getAllWindows()
         let tree = ProcessTreeBuilder.shared.buildTree()
+
+        if !ProcessTreeBuilder.shared.isInTmux(pid: claudePid, tree: tree) {
+            guard let terminalPid = ProcessTreeBuilder.shared.findTerminalPid(forProcess: claudePid, tree: tree) else {
+                return false
+            }
+            return await WindowFocuser.shared.focusTerminalWindow(terminalPid: terminalPid, windows: windows)
+        }
 
         return await focusTmuxInstance(claudePid: claudePid, tree: tree, windows: windows)
     }

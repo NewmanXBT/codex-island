@@ -68,10 +68,10 @@ struct NotchMenuView: View {
                 isOn: hooksInstalled
             ) {
                 if hooksInstalled {
-                    HookInstaller.uninstall()
+                    AppBootstrapCoordinator.shared.uninstallConfiguredIntegrations()
                     hooksInstalled = false
                 } else {
-                    HookInstaller.installIfNeeded()
+                    AppBootstrapCoordinator.shared.bootstrapIntegrations()
                     hooksInstalled = true
                 }
             }
@@ -120,7 +120,7 @@ struct NotchMenuView: View {
     }
 
     private func refreshStates() {
-        hooksInstalled = HookInstaller.isInstalled()
+        hooksInstalled = AppBootstrapCoordinator.shared.areConfiguredIntegrationsInstalled()
         launchAtLogin = SMAppService.mainApp.status == .enabled
         screenSelector.refreshScreens()
     }

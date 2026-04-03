@@ -40,6 +40,10 @@ actor SessionStore {
         sessionsSubject.eraseToAnyPublisher()
     }
 
+    func sessionState(sessionId: String) -> SessionState? {
+        sessions[sessionId]
+    }
+
     // MARK: - Initialization
 
     private init() {}
@@ -51,6 +55,12 @@ actor SessionStore {
         Self.logger.debug("Processing: \(String(describing: event), privacy: .public)")
 
         switch event {
+        case .sessionDiscovered(let session):
+            await processDiscoveredSession(session)
+
+        case .telemetryUpdated(let update):
+            await processTelemetryUpdate(update)
+
         case .hookReceived(let hookEvent):
             await processHookEvent(hookEvent)
 
@@ -114,6 +124,120 @@ actor SessionStore {
     }
 
     // MARK: - Hook Event Processing
+
+    private func processDiscoveredSession(_ discovered: SessionState) async {
+        if let existing = sessions[discovered.sessionId] {
+            var updated = existing
+            updated.lastActivity = max(existing.lastActivity, discovered.lastActivity)
+            if updated.conversationInfo != discovered.conversationInfo {
+                updated.conversationInfo = discovered.conversationInfo
+            }
+            if shouldAdoptProjectName(current: existing.projectName, replacement: discovered.projectName, cwd: discovered.cwd) {
+                updated = SessionState(
+                    sessionId: updated.sessionId,
+                    cwd: updated.cwd,
+                    projectName: discovered.projectName,
+                    provider: updated.provider,
+                    pid: updated.pid,
+                    tty: updated.tty,
+                    isInTmux: updated.isInTmux,
+                    phase: updated.phase,
+                    chatItems: updated.chatItems,
+                    toolTracker: updated.toolTracker,
+                    subagentState: updated.subagentState,
+                    conversationInfo: updated.conversationInfo,
+                    needsClearReconciliation: updated.needsClearReconciliation,
+                    lastActivity: updated.lastActivity,
+                    createdAt: updated.createdAt
+                )
+            }
+            if existing.phase == .idle {
+                updated.phase = discovered.phase
+            }
+            sessions[discovered.sessionId] = updated
+            return
+        }
+
+        sessions[discovered.sessionId] = discovered
+    }
+
+    private func processTelemetryUpdate(_ update: CodexTelemetryUpdate) async {
+        let cwd = update.cwd ?? sessions[update.sessionId]?.cwd ?? NSHomeDirectory()
+        var session = sessions[update.sessionId] ?? SessionState(
+            sessionId: update.sessionId,
+            cwd: cwd,
+            provider: .codex,
+            phase: .idle
+        )
+
+        session.lastActivity = max(session.lastActivity, update.timestamp)
+
+        if session.provider != .codex {
+            session = SessionState(
+                sessionId: session.sessionId,
+                cwd: session.cwd,
+                projectName: session.projectName,
+                provider: .codex,
+                pid: session.pid,
+                tty: session.tty,
+                isInTmux: session.isInTmux,
+                phase: session.phase,
+                chatItems: session.chatItems,
+                toolTracker: session.toolTracker,
+                subagentState: session.subagentState,
+                conversationInfo: session.conversationInfo,
+                needsClearReconciliation: session.needsClearReconciliation,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            )
+        }
+
+        if let cwd = update.cwd, session.cwd != cwd {
+            session = SessionState(
+                sessionId: session.sessionId,
+                cwd: cwd,
+                projectName: URL(fileURLWithPath: cwd).lastPathComponent,
+                provider: session.provider,
+                pid: session.pid,
+                tty: session.tty,
+                isInTmux: session.isInTmux,
+                phase: session.phase,
+                chatItems: session.chatItems,
+                toolTracker: session.toolTracker,
+                subagentState: session.subagentState,
+                conversationInfo: session.conversationInfo,
+                needsClearReconciliation: session.needsClearReconciliation,
+                lastActivity: session.lastActivity,
+                createdAt: session.createdAt
+            )
+        }
+
+        if let phase = update.phase, session.phase.canTransition(to: phase) {
+            session.phase = phase
+        }
+
+        let existingInfo = session.conversationInfo
+        let lastMessage = update.message ?? existingInfo.lastMessage
+        let lastMessageRole = update.messageRole ?? existingInfo.lastMessageRole
+        let lastToolName = update.toolName ?? existingInfo.lastToolName
+        let firstUserMessage: String?
+        if existingInfo.firstUserMessage == nil && update.messageRole == "user" {
+            firstUserMessage = update.message
+        } else {
+            firstUserMessage = existingInfo.firstUserMessage
+        }
+
+        session.conversationInfo = ConversationInfo(
+            summary: existingInfo.summary,
+            lastMessage: lastMessage,
+            lastMessageRole: lastMessageRole,
+            lastToolName: lastToolName,
+            firstUserMessage: firstUserMessage,
+            lastUserMessageDate: update.messageRole == "user" ? update.timestamp : existingInfo.lastUserMessageDate
+        )
+
+        sessions[update.sessionId] = session
+    }
 
     private func processHookEvent(_ event: HookEvent) async {
         let sessionId = event.sessionId
@@ -849,6 +973,24 @@ actor SessionStore {
     // MARK: - History Loading
 
     private func loadHistoryFromFile(sessionId: String, cwd: String) async {
+        if let session = sessions[sessionId], session.provider == .codex {
+            let parsed = await CodexConversationParser.shared.loadConversation(sessionId: sessionId)
+            await process(.historyLoaded(
+                sessionId: sessionId,
+                messages: parsed.messages,
+                completedTools: parsed.completedToolIds,
+                toolResults: parsed.toolResults,
+                structuredResults: [:],
+                conversationInfo: parsed.conversationInfo
+            ))
+
+            if var updatedSession = sessions[sessionId], updatedSession.phase == .idle {
+                updatedSession.phase = parsed.phase
+                sessions[sessionId] = updatedSession
+            }
+            return
+        }
+
         // Parse file asynchronously
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
@@ -986,5 +1128,14 @@ actor SessionStore {
     /// Get all current sessions
     func allSessions() -> [SessionState] {
         Array(sessions.values)
+    }
+
+    private func shouldAdoptProjectName(current: String, replacement: String, cwd: String) -> Bool {
+        if current == replacement {
+            return false
+        }
+
+        let cwdName = URL(fileURLWithPath: cwd).lastPathComponent
+        return current == cwdName && replacement != cwdName
     }
 }

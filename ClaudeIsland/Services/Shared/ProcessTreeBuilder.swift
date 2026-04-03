@@ -142,4 +142,90 @@ struct ProcessTreeBuilder: Sendable {
 
         return nil
     }
+
+    /// Count live Codex CLI processes by working directory.
+    /// This is used as a fallback liveness signal for Codex sessions, which do not
+    /// currently emit a reliable explicit session-ended event into Claude Island.
+    nonisolated func activeCodexProcessCountsByWorkingDirectory() -> [String: Int] {
+        let tree = buildTree()
+        let codexPids = tree.values.compactMap { info -> Int? in
+            let executable = info.command
+                .split(separator: " ")
+                .first
+                .map(String.init)?
+                .split(separator: "/")
+                .last
+                .map(String.init)?
+                .lowercased()
+
+            return executable == "codex" ? info.pid : nil
+        }
+
+        var counts: [String: Int] = [:]
+        for pid in codexPids {
+            guard let cwd = getWorkingDirectory(forPid: pid) else { continue }
+            counts[cwd, default: 0] += 1
+        }
+
+        return counts
+    }
+
+    /// Returns the most likely active Codex session ID per live Codex process by
+    /// inspecting the transcript files that process currently has open.
+    nonisolated func activeCodexSessionIds() -> Set<String> {
+        let tree = buildTree()
+        let codexPids = tree.values.compactMap { info -> Int? in
+            let executable = info.command
+                .split(separator: " ")
+                .first
+                .map(String.init)?
+                .split(separator: "/")
+                .last
+                .map(String.init)?
+                .lowercased()
+
+            return executable == "codex" ? info.pid : nil
+        }
+
+        var sessionIds = Set<String>()
+        for pid in codexPids {
+            if let sessionId = activeCodexSessionId(forPid: pid) {
+                sessionIds.insert(sessionId)
+            }
+        }
+
+        return sessionIds
+    }
+
+    private nonisolated func activeCodexSessionId(forPid pid: Int) -> String? {
+        guard let output = ProcessExecutor.shared.runSyncOrNil("/usr/sbin/lsof", arguments: ["-p", String(pid)]) else {
+            return nil
+        }
+
+        let transcriptPaths = output
+            .components(separatedBy: "\n")
+            .compactMap { line -> String? in
+                guard line.contains("/.codex/sessions/"), line.contains(".jsonl") else { return nil }
+                let columns = line.split(whereSeparator: \.isWhitespace)
+                guard let path = columns.last else { return nil }
+                return String(path)
+            }
+
+        let newestPath = transcriptPaths.max { lhs, rhs in
+            let leftDate = (try? URL(fileURLWithPath: lhs).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let rightDate = (try? URL(fileURLWithPath: rhs).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return leftDate < rightDate
+        }
+
+        guard let newestPath else { return nil }
+        return Self.extractCodexSessionId(fromTranscriptPath: newestPath)
+    }
+
+    private nonisolated static func extractCodexSessionId(fromTranscriptPath path: String) -> String? {
+        let filename = URL(fileURLWithPath: path).lastPathComponent
+        guard let range = filename.range(of: #"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"#, options: .regularExpression) else {
+            return nil
+        }
+        return String(filename[range])
+    }
 }

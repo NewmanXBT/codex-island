@@ -11,7 +11,7 @@ import SwiftUI
 struct ChatView: View {
     let sessionId: String
     let initialSession: SessionState
-    let sessionMonitor: ClaudeSessionMonitor
+    let sessionMonitor: SessionMonitor
     @ObservedObject var viewModel: NotchViewModel
 
     @State private var inputText: String = ""
@@ -26,7 +26,7 @@ struct ChatView: View {
     @State private var isBottomVisible: Bool = true
     @FocusState private var isInputFocused: Bool
 
-    init(sessionId: String, initialSession: SessionState, sessionMonitor: ClaudeSessionMonitor, viewModel: NotchViewModel) {
+    init(sessionId: String, initialSession: SessionState, sessionMonitor: SessionMonitor, viewModel: NotchViewModel) {
         self.sessionId = sessionId
         self.initialSession = initialSession
         self.sessionMonitor = sessionMonitor
@@ -49,6 +49,10 @@ struct ChatView: View {
     /// Extract the tool name if waiting for approval
     private var approvalTool: String? {
         session.phase.approvalToolName
+    }
+
+    private var providerName: String {
+        session.providerDisplayName
     }
 
     
@@ -195,6 +199,8 @@ struct ChatView: View {
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(.white.opacity(isHeaderHovered ? 1.0 : 0.85))
                     .lineLimit(1)
+
+                ProviderBadge(provider: session.provider)
 
                 Spacer()
             }
@@ -353,14 +359,18 @@ struct ChatView: View {
 
     // MARK: - Input Bar
 
-    /// Can send messages only if session is in tmux
+    /// Allow messaging for tmux sessions and live Codex sessions with a process
     private var canSendMessages: Bool {
-        session.isInTmux && session.tty != nil
+        if session.isInTmux {
+            return session.tty != nil
+        }
+
+        return session.provider == .codex && session.pid != nil
     }
 
     private var inputBar: some View {
         HStack(spacing: 10) {
-            TextField(canSendMessages ? "Message Claude..." : "Open Claude Code in tmux to enable messaging", text: $inputText)
+            TextField(canSendMessages ? "Message \(providerName)..." : "Live \(providerName) session required", text: $inputText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .foregroundColor(canSendMessages ? .white : .white.opacity(0.4))
@@ -412,6 +422,7 @@ struct ChatView: View {
         ChatApprovalBar(
             tool: tool,
             toolInput: session.pendingToolInput,
+            providerName: providerName,
             onApprove: { approvePermission() },
             onDeny: { denyPermission() }
         )
@@ -422,6 +433,7 @@ struct ChatView: View {
     /// Bar for interactive tools like AskUserQuestion that need terminal input
     private var interactivePromptBar: some View {
         ChatInteractivePromptBar(
+            providerName: providerName,
             isInTmux: session.isInTmux,
             onGoToTerminal: { focusTerminal() }
         )
@@ -479,12 +491,16 @@ struct ChatView: View {
     }
 
     private func sendToSession(_ text: String) async {
-        guard session.isInTmux else { return }
-        guard let tty = session.tty else { return }
-
-        if let target = await findTmuxTarget(tty: tty) {
-            _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+        if session.isInTmux {
+            guard let tty = session.tty else { return }
+            if let target = await findTmuxTarget(tty: tty) {
+                _ = await ToolApprovalHandler.shared.sendMessage(text, to: target)
+            }
+            return
         }
+
+        guard session.provider == .codex else { return }
+        _ = await TerminalMessageSender.shared.sendMessage(text, to: session)
     }
 
     private func findTmuxTarget(tty: String) async -> TmuxTarget? {
@@ -983,6 +999,7 @@ struct InterruptedMessageView: View {
 
 /// Bar for interactive tools like AskUserQuestion that need terminal input
 struct ChatInteractivePromptBar: View {
+    let providerName: String
     let isInTmux: Bool
     let onGoToTerminal: () -> Void
 
@@ -996,7 +1013,7 @@ struct ChatInteractivePromptBar: View {
                 Text(MCPToolFormatter.formatToolName("AskUserQuestion"))
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundColor(TerminalColors.amber)
-                Text("Claude Code needs your input")
+                Text("\(providerName) needs your input")
                     .font(.system(size: 11))
                     .foregroundColor(.white.opacity(0.5))
                     .lineLimit(1)
@@ -1049,6 +1066,7 @@ struct ChatInteractivePromptBar: View {
 struct ChatApprovalBar: View {
     let tool: String
     let toolInput: String?
+    let providerName: String
     let onApprove: () -> Void
     let onDeny: () -> Void
 
@@ -1065,6 +1083,11 @@ struct ChatApprovalBar: View {
                     .foregroundColor(TerminalColors.amber)
                 if let input = toolInput {
                     Text(input)
+                        .font(.system(size: 11))
+                        .foregroundColor(.white.opacity(0.5))
+                        .lineLimit(1)
+                } else {
+                    Text("\(providerName) is waiting for approval")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.5))
                         .lineLimit(1)

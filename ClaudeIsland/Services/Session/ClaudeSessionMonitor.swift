@@ -11,11 +11,13 @@ import Combine
 import Foundation
 
 @MainActor
-class ClaudeSessionMonitor: ObservableObject {
+class SessionMonitor: ObservableObject {
     @Published var instances: [SessionState] = []
     @Published var pendingInstances: [SessionState] = []
 
+    private let codexRefreshInterval: TimeInterval = 5
     private var cancellables = Set<AnyCancellable>()
+    private var codexRefreshTimer: Timer?
 
     init() {
         SessionStore.shared.sessionsPublisher
@@ -31,6 +33,12 @@ class ClaudeSessionMonitor: ObservableObject {
     // MARK: - Monitoring Lifecycle
 
     func startMonitoring() {
+        Task {
+            await refreshCodexSessions()
+        }
+
+        startCodexRefreshTimer()
+
         HookSocketServer.shared.start(
             onEvent: { event in
                 Task {
@@ -72,6 +80,8 @@ class ClaudeSessionMonitor: ObservableObject {
 
     func stopMonitoring() {
         HookSocketServer.shared.stop()
+        codexRefreshTimer?.invalidate()
+        codexRefreshTimer = nil
     }
 
     // MARK: - Permission Handling
@@ -127,6 +137,71 @@ class ClaudeSessionMonitor: ObservableObject {
         pendingInstances = sessions.filter { $0.needsAttention }
     }
 
+    private func startCodexRefreshTimer() {
+        guard codexRefreshTimer == nil else { return }
+
+        codexRefreshTimer = Timer.scheduledTimer(withTimeInterval: codexRefreshInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.refreshCodexSessions()
+                await self.pruneStaleCodexSessions()
+            }
+        }
+    }
+
+    private func refreshCodexSessions() async {
+        let activeSessionIds = ProcessTreeBuilder.shared.activeCodexSessionIds()
+        let discoveredCodexSessions = await CodexSessionScanner.shared.scanRecentSessions()
+
+        let sessionsToRefresh = discoveredCodexSessions.filter { activeSessionIds.contains($0.sessionId) }
+        for session in sessionsToRefresh {
+            await SessionStore.shared.process(.sessionDiscovered(session))
+            await SessionStore.shared.process(.loadHistory(sessionId: session.sessionId, cwd: session.cwd))
+        }
+    }
+
+    private func pruneStaleCodexSessions() async {
+        let codexInstances = instances.filter { $0.provider == .codex }
+        guard !codexInstances.isEmpty else { return }
+
+        let activeSessionIds = ProcessTreeBuilder.shared.activeCodexSessionIds()
+        if !activeSessionIds.isEmpty {
+            let staleSessionIds = codexInstances
+                .filter { !activeSessionIds.contains($0.sessionId) }
+                .map(\.sessionId)
+
+            for sessionId in staleSessionIds {
+                await SessionStore.shared.process(.sessionEnded(sessionId: sessionId))
+            }
+            return
+        }
+
+        let activeCounts = ProcessTreeBuilder.shared.activeCodexProcessCountsByWorkingDirectory()
+        let grouped = Dictionary(grouping: codexInstances, by: \.cwd)
+
+        var staleSessionIds: [String] = []
+
+        for (cwd, sessionsForCwd) in grouped {
+            let keepCount = activeCounts[cwd] ?? 0
+            let sorted = sessionsForCwd.sorted { lhs, rhs in
+                if lhs.lastActivity != rhs.lastActivity {
+                    return lhs.lastActivity > rhs.lastActivity
+                }
+                return lhs.createdAt > rhs.createdAt
+            }
+
+            if keepCount <= 0 {
+                staleSessionIds.append(contentsOf: sorted.map(\.sessionId))
+            } else if sorted.count > keepCount {
+                staleSessionIds.append(contentsOf: sorted.dropFirst(keepCount).map(\.sessionId))
+            }
+        }
+
+        for sessionId in staleSessionIds {
+            await SessionStore.shared.process(.sessionEnded(sessionId: sessionId))
+        }
+    }
+
     // MARK: - History Loading (for UI)
 
     /// Request history load for a session
@@ -139,7 +214,7 @@ class ClaudeSessionMonitor: ObservableObject {
 
 // MARK: - Interrupt Watcher Delegate
 
-extension ClaudeSessionMonitor: JSONLInterruptWatcherDelegate {
+extension SessionMonitor: JSONLInterruptWatcherDelegate {
     nonisolated func didDetectInterrupt(sessionId: String) {
         Task {
             await SessionStore.shared.process(.interruptDetected(sessionId: sessionId))

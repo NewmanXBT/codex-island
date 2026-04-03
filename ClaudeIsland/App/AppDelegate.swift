@@ -4,6 +4,44 @@ import Mixpanel
 import Sparkle
 import SwiftUI
 
+final class AppBootstrapCoordinator {
+    static let shared = AppBootstrapCoordinator()
+
+    private init() {}
+
+    /// This is the one app-level seam for provider setup.
+    /// Codex wiring plugs in here next without creating a second startup path.
+    var enabledProviders: [ProviderKind] {
+        [.claude, .codex]
+    }
+
+    func bootstrapIntegrations() {
+        if enabledProviders.contains(.claude) {
+            HookInstaller.installIfNeeded()
+        }
+        if enabledProviders.contains(.codex) {
+            CodexTelemetryInstaller.installIfNeeded()
+            CodexTelemetryServer.shared.start()
+        }
+    }
+
+    func uninstallConfiguredIntegrations() {
+        if enabledProviders.contains(.claude) {
+            HookInstaller.uninstall()
+        }
+        if enabledProviders.contains(.codex) {
+            CodexTelemetryServer.shared.stop()
+            CodexTelemetryInstaller.uninstall()
+        }
+    }
+
+    func areConfiguredIntegrationsInstalled() -> Bool {
+        let claudeInstalled = !enabledProviders.contains(.claude) || HookInstaller.isInstalled()
+        let codexInstalled = !enabledProviders.contains(.codex) || CodexTelemetryInstaller.isInstalled()
+        return claudeInstalled && codexInstalled
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowManager: WindowManager?
     private var screenObserver: ScreenObserver?
@@ -67,7 +105,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         Mixpanel.mainInstance().track(event: "App Launched")
         Mixpanel.mainInstance().flush()
 
-        HookInstaller.installIfNeeded()
+        AppBootstrapCoordinator.shared.bootstrapIntegrations()
         NSApplication.shared.setActivationPolicy(.accessory)
 
         windowManager = WindowManager()

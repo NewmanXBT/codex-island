@@ -42,6 +42,20 @@ class ChatHistoryManager: ObservableObject {
     }
 
     func syncFromFile(sessionId: String, cwd: String) async {
+        if let session = await SessionStore.shared.sessionState(sessionId: sessionId),
+           session.provider == .codex {
+            let parsed = await CodexConversationParser.shared.loadConversation(sessionId: sessionId)
+            await SessionStore.shared.process(.historyLoaded(
+                sessionId: sessionId,
+                messages: parsed.messages,
+                completedTools: parsed.completedToolIds,
+                toolResults: parsed.toolResults,
+                structuredResults: [:],
+                conversationInfo: parsed.conversationInfo
+            ))
+            return
+        }
+
         let messages = await ConversationParser.shared.parseFullConversation(
             sessionId: sessionId,
             cwd: cwd
