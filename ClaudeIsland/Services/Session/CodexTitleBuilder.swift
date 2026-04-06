@@ -14,13 +14,15 @@ enum CodexTitleBuilder {
             return nil
         }
 
-        let candidateLines = rawText
+        let normalizedRawText = normalizedPrompt(from: rawText)
+
+        let candidateLines = normalizedRawText
             .replacingOccurrences(of: "\r", with: "\n")
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { isMeaningfulLine($0) }
 
-        var text = bestCandidate(from: candidateLines) ?? candidateLines.first ?? rawText
+        var text = bestCandidate(from: candidateLines) ?? candidateLines.first ?? normalizedRawText
         guard !text.isEmpty else {
             return nil
         }
@@ -53,6 +55,11 @@ enum CodexTitleBuilder {
         }
 
         let leadingNoise = [
+            "you are working in",
+            "the following is the codex agent history",
+            "treat the transcript",
+            "assess the exact planned action below",
+            "planned action json",
             "please",
             "can you",
             "could you",
@@ -69,7 +76,12 @@ enum CodexTitleBuilder {
             "look at",
             "review",
             "please review",
-            "can you review"
+            "can you review",
+            "own the",
+            "you may edit files directly in your branch workspace",
+            "do not touch",
+            "do not edit files",
+            "you are not alone in the codebase"
         ]
 
         let lower = text.lowercased()
@@ -112,6 +124,81 @@ enum CodexTitleBuilder {
         }
 
         return text
+    }
+
+    private static func normalizedPrompt(from rawText: String) -> String {
+        if let embeddedUserPrompt = extractEmbeddedUserPrompt(from: rawText) {
+            return embeddedUserPrompt
+        }
+
+        var text = rawText
+        let patterns = [
+            #"(?is)^you are working in\s+\S+\.\s*"#,
+            #"(?is)\byou are not alone in the codebase\b.*$"#,
+            #"(?is)\bfinal response must\b.*$"#,
+            #"(?is)\breturn a concise inventory\b.*$"#,
+            #"(?is)\bdo not edit files\b.*$"#,
+            #"(?is)\bdo not touch\b.*$"#
+        ]
+
+        for pattern in patterns {
+            text = text.replacingOccurrences(
+                of: pattern,
+                with: " ",
+                options: .regularExpression
+            )
+        }
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func extractEmbeddedUserPrompt(from rawText: String) -> String? {
+        guard rawText.localizedCaseInsensitiveContains(">>> TRANSCRIPT START") else {
+            return nil
+        }
+
+        let patterns = [
+            #"(?m)^\[\d+\]\s+user:\s+(.+)$"#,
+            #"(?m)^user:\s+(.+)$"#
+        ]
+
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+
+            let range = NSRange(rawText.startIndex..<rawText.endIndex, in: rawText)
+            let matches = regex.matches(in: rawText, options: [], range: range)
+
+            for match in matches {
+                guard match.numberOfRanges > 1,
+                      let matchRange = Range(match.range(at: 1), in: rawText) else {
+                    continue
+                }
+
+                let candidate = String(rawText[matchRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if isUsefulEmbeddedPrompt(candidate) {
+                    return candidate
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func isUsefulEmbeddedPrompt(_ candidate: String) -> Bool {
+        guard candidate.count >= 8 else { return false }
+
+        let lower = candidate.lowercased()
+        let rejectedPrefixes = [
+            "the following is the codex agent history",
+            "assess the exact planned action below",
+            "planned action json",
+            "do you want me to",
+            "you are working in"
+        ]
+
+        return !rejectedPrefixes.contains { lower.hasPrefix($0) }
     }
 
     private static func isMeaningfulLine(_ line: String) -> Bool {
@@ -166,8 +253,17 @@ enum CodexTitleBuilder {
         let lower = line.lowercased()
         var score = 0
 
+        if lower.contains(">>> transcript start") { score -= 12 }
+        if lower.contains("approval request start") { score -= 10 }
+        if lower.contains("planned action json") { score -= 10 }
+        if lower.contains("you are working in") { score -= 8 }
+        if lower.contains("do not edit files") { score -= 7 }
+        if lower.contains("final response must") { score -= 7 }
         if lower.contains("fix ") || lower.hasPrefix("fix") { score += 5 }
         if lower.contains("improve ") || lower.hasPrefix("improve") { score += 4 }
+        if lower.contains("create ") || lower.hasPrefix("create") { score += 4 }
+        if lower.contains("propose ") || lower.hasPrefix("propose") { score += 3 }
+        if lower.contains("inventory") { score += 2 }
         if lower.contains("rename ") || lower.hasPrefix("rename") { score += 4 }
         if lower.contains("message") || lower.contains("messaging") { score += 4 }
         if lower.contains("title") || lower.contains("summary") { score += 4 }
