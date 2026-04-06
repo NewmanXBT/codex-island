@@ -12,6 +12,7 @@ actor CodexConversationParser {
 
     private static let activeSessionFreshnessWindow: TimeInterval = 75
     private static let waitingForInputFreshnessWindow: TimeInterval = 10 * 60
+    private static let duplicateMessageWindow: TimeInterval = 2
 
     struct ParsedConversation {
         let messages: [ChatMessage]
@@ -258,8 +259,10 @@ actor CodexConversationParser {
             lastMessageRole = lastAssistantMessage != nil ? "assistant" : (lastUserMessage != nil ? "user" : (lastToolInput != nil ? "tool" : nil))
         }
 
+        let normalizedMessages = deduplicatedMessages(messages.sorted { $0.timestamp < $1.timestamp })
+
         return ParsedConversation(
-            messages: messages.sorted { $0.timestamp < $1.timestamp },
+            messages: normalizedMessages,
             completedToolIds: completedToolIds,
             toolResults: toolResults,
             conversationInfo: ConversationInfo(
@@ -276,6 +279,63 @@ actor CodexConversationParser {
                 modified: modified
             )
         )
+    }
+
+    private func deduplicatedMessages(_ messages: [ChatMessage]) -> [ChatMessage] {
+        var deduplicated: [ChatMessage] = []
+
+        for message in messages {
+            guard let previous = deduplicated.last else {
+                deduplicated.append(message)
+                continue
+            }
+
+            if shouldDropAsDuplicate(message, previous: previous) {
+                continue
+            }
+
+            deduplicated.append(message)
+        }
+
+        return deduplicated
+    }
+
+    private func shouldDropAsDuplicate(_ candidate: ChatMessage, previous: ChatMessage) -> Bool {
+        guard candidate.role == .assistant,
+              previous.role == .assistant else {
+            return false
+        }
+
+        let timestampDistance = candidate.timestamp.timeIntervalSince(previous.timestamp)
+        guard timestampDistance >= 0,
+              timestampDistance <= Self.duplicateMessageWindow else {
+            return false
+        }
+
+        let candidateText = normalizedDuplicateComparisonText(candidate)
+        let previousText = normalizedDuplicateComparisonText(previous)
+        guard !candidateText.isEmpty,
+              candidateText == previousText else {
+            return false
+        }
+
+        return true
+    }
+
+    private func normalizedDuplicateComparisonText(_ message: ChatMessage) -> String {
+        let normalizedBlocks = message.content.compactMap { block -> String? in
+            switch block {
+            case .text(let text), .thinking(let text):
+                return text
+            case .toolUse, .interrupted:
+                return nil
+            }
+        }
+
+        return normalizedBlocks
+            .joined(separator: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
     }
 
     private func parseAssistantText(from rawContent: Any?) -> String? {
