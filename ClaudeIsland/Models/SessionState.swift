@@ -208,6 +208,51 @@ struct SessionState: Equatable, Identifiable, Sendable {
     var canInteract: Bool {
         phase.needsAttention
     }
+
+    /// Explicit short status text for cards and notch surfaces
+    var cardStatusText: String {
+        switch phase {
+        case .processing:
+            return "Running now"
+        case .compacting:
+            return "Compacting context"
+        case .waitingForInput:
+            return "Waiting for your next step"
+        case .waitingForApproval(let context):
+            return context.toolName == "AskUserQuestion" ? "Needs your input" : "Waiting for approval"
+        case .idle:
+            return "Idle"
+        case .ended:
+            return "Ended"
+        }
+    }
+
+    /// Deduplicated detail text for cards. Hides content that simply repeats the title/summary.
+    var cardDetailText: String? {
+        guard let message = lastMessage?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !message.isEmpty else {
+            return nil
+        }
+
+        if isDuplicateCardText(message, comparedWith: displayTitle)
+            || isDuplicateCardText(message, comparedWith: summary)
+            || isDuplicateCardText(message, comparedWith: firstUserMessage) {
+            return nil
+        }
+
+        switch lastMessageRole {
+        case "tool":
+            if let lastToolName {
+                let toolLabel = MCPToolFormatter.formatToolName(lastToolName)
+                return message.isEmpty ? toolLabel : "\(toolLabel) \(message)"
+            }
+            return message
+        case "user":
+            return "You: \(message)"
+        default:
+            return message
+        }
+    }
 }
 
 private func formattedDisplayTitle(
@@ -289,6 +334,31 @@ private func cleanedTitleCandidate(_ raw: String?) -> String? {
     if text.count > 44 {
         text = String(text.prefix(41)).trimmingCharacters(in: .whitespacesAndNewlines) + "..."
     }
+
+    return text.isEmpty ? nil : text
+}
+
+private func isDuplicateCardText(_ lhs: String?, comparedWith rhs: String?) -> Bool {
+    guard let left = normalizedCardComparisonText(lhs),
+          let right = normalizedCardComparisonText(rhs) else {
+        return false
+    }
+
+    return left == right || left.hasSuffix(right) || right.hasSuffix(left)
+}
+
+private func normalizedCardComparisonText(_ raw: String?) -> String? {
+    guard var text = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+          !text.isEmpty else {
+        return nil
+    }
+
+    if let separatorRange = text.range(of: "·") {
+        text = String(text[separatorRange.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    text = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+    text = text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters))
 
     return text.isEmpty ? nil : text
 }

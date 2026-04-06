@@ -160,6 +160,11 @@ struct InstanceRow: View {
                     ProviderBadge(provider: session.provider)
                 }
 
+                Text(session.cardStatusText)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(statusColor)
+                    .lineLimit(1)
+
                 // Show tool call when waiting for approval, otherwise last activity
                 if isWaitingForApproval, let toolName = session.pendingToolName {
                     // Show tool name in amber + input on same line
@@ -179,47 +184,8 @@ struct InstanceRow: View {
                                 .lineLimit(1)
                         }
                     }
-                } else if let role = session.lastMessageRole {
-                    switch role {
-                    case "tool":
-                        // Tool call - show tool name + input
-                        HStack(spacing: 4) {
-                            if let toolName = session.lastToolName {
-                                Text(MCPToolFormatter.formatToolName(toolName))
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundColor(.white.opacity(0.5))
-                            }
-                            if let input = session.lastMessage {
-                                Text(input)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.4))
-                                    .lineLimit(1)
-                            }
-                        }
-                    case "user":
-                        // User message - prefix with "You:"
-                        HStack(spacing: 4) {
-                            Text("You:")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.white.opacity(0.5))
-                            if let msg = session.lastMessage {
-                                Text(msg)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(.white.opacity(0.4))
-                                    .lineLimit(1)
-                            }
-                        }
-                    default:
-                        // Assistant message - just show text
-                        if let msg = session.lastMessage {
-                            Text(msg)
-                                .font(.system(size: 11))
-                                .foregroundColor(.white.opacity(0.4))
-                                .lineLimit(1)
-                        }
-                    }
-                } else if let lastMsg = session.lastMessage {
-                    Text(lastMsg)
+                } else if let secondaryText = session.cardDetailText {
+                    Text(secondaryText)
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.4))
                         .lineLimit(1)
@@ -319,6 +285,19 @@ struct InstanceRow: View {
             Circle()
                 .fill(Color.white.opacity(0.2))
                 .frame(width: 6, height: 6)
+        }
+    }
+
+    private var statusColor: Color {
+        switch session.phase {
+        case .processing, .compacting:
+            return claudeOrange
+        case .waitingForApproval:
+            return TerminalColors.amber
+        case .waitingForInput:
+            return TerminalColors.green
+        case .idle, .ended:
+            return .white.opacity(0.35)
         }
     }
 

@@ -11,6 +11,7 @@ actor CodexConversationParser {
     static let shared = CodexConversationParser()
 
     private static let activeSessionFreshnessWindow: TimeInterval = 75
+    private static let waitingForInputFreshnessWindow: TimeInterval = 10 * 60
 
     struct ParsedConversation {
         let messages: [ChatMessage]
@@ -326,15 +327,20 @@ actor CodexConversationParser {
             return .processing
         }
 
-        let isFresh = Date().timeIntervalSince(modified) <= Self.activeSessionFreshnessWindow
+        let age = Date().timeIntervalSince(modified)
+        let isActivelyFresh = age <= Self.activeSessionFreshnessWindow
+        let isRecentlyActive = age <= Self.waitingForInputFreshnessWindow
 
         switch lastSignificantKind {
         case .assistant:
-            return .waitingForInput
+            return isRecentlyActive ? .waitingForInput : .idle
         case .idle:
             return .idle
         case .user, .tool, .reasoning:
-            return isFresh ? .processing : .idle
+            if isActivelyFresh {
+                return .processing
+            }
+            return isRecentlyActive ? .waitingForInput : .idle
         }
     }
 

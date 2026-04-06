@@ -158,7 +158,12 @@ actor SessionStore {
                     createdAt: updated.createdAt
                 )
             }
-            if existing.phase == .idle {
+            if shouldAdoptCodexPhase(
+                current: existing.phase,
+                replacement: discovered.phase,
+                replacementActivity: discovered.lastActivity,
+                existingActivity: existing.lastActivity
+            ) {
                 updated.phase = discovered.phase
             }
             sessions[discovered.sessionId] = updated
@@ -626,7 +631,12 @@ actor SessionStore {
         if session.provider == .codex {
             let parsed = await CodexConversationParser.shared.loadConversation(sessionId: payload.sessionId)
             session.conversationInfo = parsed.conversationInfo
-            if session.phase == .idle {
+            if shouldAdoptCodexPhase(
+                current: session.phase,
+                replacement: parsed.phase,
+                replacementActivity: session.lastActivity,
+                existingActivity: session.lastActivity
+            ) {
                 session.phase = parsed.phase
             }
         } else {
@@ -999,7 +1009,12 @@ actor SessionStore {
                 conversationInfo: parsed.conversationInfo
             ))
 
-            if var updatedSession = sessions[sessionId], updatedSession.phase == .idle {
+            if var updatedSession = sessions[sessionId], shouldAdoptCodexPhase(
+                current: updatedSession.phase,
+                replacement: parsed.phase,
+                replacementActivity: updatedSession.lastActivity,
+                existingActivity: updatedSession.lastActivity
+            ) {
                 updatedSession.phase = parsed.phase
                 sessions[sessionId] = updatedSession
             }
@@ -1152,5 +1167,39 @@ actor SessionStore {
 
         let cwdName = URL(fileURLWithPath: cwd).lastPathComponent
         return current == cwdName && replacement != cwdName
+    }
+
+    private func shouldAdoptCodexPhase(
+        current: SessionPhase,
+        replacement: SessionPhase,
+        replacementActivity: Date,
+        existingActivity: Date
+    ) -> Bool {
+        if case .waitingForApproval = current {
+            return false
+        }
+
+        if current == replacement {
+            return false
+        }
+
+        if replacementActivity < existingActivity, current.isActive {
+            return false
+        }
+
+        if current.canTransition(to: replacement) {
+            return true
+        }
+
+        switch (current, replacement) {
+        case (.processing, .waitingForInput),
+             (.processing, .idle),
+             (.waitingForInput, .idle),
+             (.idle, .waitingForInput),
+             (.idle, .processing):
+            return true
+        default:
+            return false
+        }
     }
 }
