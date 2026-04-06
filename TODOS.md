@@ -36,56 +36,38 @@
 
 **Depends on / blocked by:** Best revisited after Codex v1 ships and real usage clarifies whether Claude compatibility is still worth carrying.
 
-## Improve Session Title Summaries
+## Finish Internal Rename Cleanup
 
-**What:** Improve session title generation so each session title is brief, context-aware, and reliably summarizes the actual task.
+**What:** Finish the remaining internal rename surfaces that still intentionally say Claude after the external product rename to Codex Island.
 
-**Why:** The current title derivation is useful but still too literal in some cases. The top-level session list needs short, high-signal labels that stay readable at a glance.
-
-**Pros:**
-- Makes the session list and notch much easier to scan during a busy Codex workflow.
-- Reduces ambiguity when multiple sessions are open in the same repo or related repos.
-
-**Cons:**
-- Over-aggressive summarization can hide useful detail or create misleading titles.
-- Good summarization likely needs iteration against real transcripts rather than one static heuristic.
-
-**Context:** Current Codex title generation exists, but the product bar should be higher: titles should be compact and context-rich, not just truncated prompts.
-
-**Depends on / blocked by:** Depends on transcript examples and title-quality iteration, not blocked on platform APIs.
-
-## Fix Outbound Messaging To Live Sessions
-
-**What:** Fix sending messages from the app into live sessions so the chat input reliably works during normal use.
-
-**Why:** Typing into the session from the app is a core part of the product loop. If input is unreliable or unavailable, the chat UI feels incomplete.
+**Why:** User-facing branding now says Codex Island, but the codebase still carries Claude-first identifiers in target names, bundle identifiers, hook compatibility layers, comments, logger subsystems, and script paths. Some of that debt is acceptable; some of it will keep causing confusion if left indefinitely.
 
 **Pros:**
-- Unlocks a real "stay in the island" workflow instead of forcing terminal context switches.
-- Makes Codex session monitoring feel interactive rather than read-only.
+- Reduces confusion between the app's public identity and its internal implementation.
+- Creates a cleaner base for future work on packaging, releases, and long-term maintenance.
 
 **Cons:**
-- Terminal routing is fragile across terminal apps, tmux, focus state, permissions, and TTY discovery.
-- A naive implementation could send text to the wrong terminal or fail silently.
+- Some rename surfaces are compatibility-sensitive, especially bundle identifiers, hook script paths, socket names, and updater infrastructure.
+- A full cleanup can become churn-heavy if it is not split into compatibility-safe slices.
 
-**Context:** There is partial wiring for live session messaging, but it is not yet working reliably enough to count as shipped behavior.
+**Context:** External product surfaces, release scripts, and live Codex title/messaging improvements are already shipped. What remains is the deliberate internal debt: `ClaudeIsland` target/module naming, Claude-oriented comments and docs, logger subsystem names, Claude hook compatibility pieces, and fallback identifiers that should be audited instead of blindly renamed.
 
-**Depends on / blocked by:** Depends on terminal targeting, accessibility/AppleScript behavior, and live-session routing correctness.
+**Depends on / blocked by:** Best handled incrementally, with each slice evaluated for compatibility risk before renaming.
 
-## Rename Product To Codex Island
+## Verify Rename-Related Update Infrastructure
 
-**What:** Rename the product, repo, bundle-facing copy, and release artifacts from "Claude Island" to "Codex Island".
+**What:** Verify that Sparkle/appcast/release automation still points to the correct production endpoints after the Codex Island rename.
 
-**Why:** The fork is now explicitly Codex-first. Keeping the Claude-first name creates product confusion and makes the current direction look half-finished.
+**Why:** The external product rename updated names and GitHub release references, but update feeds and website-backed release infrastructure can still break if they remain on legacy Claude Island endpoints.
 
 **Pros:**
-- Aligns the product name with the actual target workflow and roadmap.
-- Removes needless brand ambiguity in the UI, docs, and repository.
+- Reduces the risk of shipping a renamed app with broken update discovery or release publishing.
+- Clarifies which deployment surfaces must stay on legacy names temporarily and which should move now.
 
 **Cons:**
-- Renaming touches user-facing copy, package metadata, bundle identifiers, release assets, and documentation.
-- Some compatibility seams may still intentionally reference Claude internally for a while.
+- May require coordination with website/appcast hosting outside this repo.
+- Some endpoints may need to stay on legacy domains until migration is complete.
 
-**Context:** The current implementation is already moving toward a Codex-first product, but the external identity still says Claude Island in many places.
+**Context:** Release scripts now target the Codex Island repository and product name, but `Info.plist` still points Sparkle at `https://claudeisland.com/appcast.xml`. That may be intentional, or it may be stale; it needs verification instead of assumption.
 
-**Depends on / blocked by:** Best done as a coordinated cleanup pass after deciding which legacy Claude compatibility should remain.
+**Depends on / blocked by:** Depends on whoever owns appcast hosting, release publishing, and the website/release delivery path.
