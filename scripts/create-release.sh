@@ -12,13 +12,13 @@ KEYS_DIR="$PROJECT_DIR/.sparkle-keys"
 # GitHub repository (owner/repo format)
 GITHUB_REPO="NewmanXBT/codex-island"
 
-# Website repo for auto-updating appcast
-WEBSITE_DIR="${CLAUDE_ISLAND_WEBSITE:-$PROJECT_DIR/../ClaudeIsland-website}"
+# Optional website repo for mirroring appcast/download metadata
+WEBSITE_DIR="${CODEX_ISLAND_WEBSITE:-${CLAUDE_ISLAND_WEBSITE:-$PROJECT_DIR/../CodexIsland-website}}"
 WEBSITE_PUBLIC="$WEBSITE_DIR/public"
 
 APP_PATH="$EXPORT_PATH/Codex Island.app"
 APP_NAME="CodexIsland"
-KEYCHAIN_PROFILE="ClaudeIsland"
+KEYCHAIN_PROFILE="CodexIsland"
 
 echo "=== Creating Release ==="
 echo ""
@@ -211,9 +211,17 @@ else
     if gh release view "v$VERSION" --repo "$GITHUB_REPO" &>/dev/null; then
         echo "Release v$VERSION already exists. Updating..."
         gh release upload "v$VERSION" "$DMG_PATH" --repo "$GITHUB_REPO" --clobber
+        if [ -f "$RELEASE_DIR/appcast/appcast.xml" ]; then
+            gh release upload "v$VERSION" "$RELEASE_DIR/appcast/appcast.xml" --repo "$GITHUB_REPO" --clobber
+        fi
     else
         echo "Creating release v$VERSION..."
-        gh release create "v$VERSION" "$DMG_PATH" \
+        RELEASE_ASSETS=("$DMG_PATH")
+        if [ -f "$RELEASE_DIR/appcast/appcast.xml" ]; then
+            RELEASE_ASSETS+=("$RELEASE_DIR/appcast/appcast.xml")
+        fi
+
+        gh release create "v$VERSION" "${RELEASE_ASSETS[@]}" \
             --repo "$GITHUB_REPO" \
             --title "Codex Island v$VERSION" \
             --notes "## Codex Island v$VERSION
@@ -228,8 +236,12 @@ After installation, Codex Island will automatically check for updates."
     fi
 
     GITHUB_DOWNLOAD_URL="https://github.com/$GITHUB_REPO/releases/download/v$VERSION/$APP_NAME-$VERSION.dmg"
+    GITHUB_APPCAST_URL="https://github.com/$GITHUB_REPO/releases/latest/download/appcast.xml"
     echo "GitHub release created: https://github.com/$GITHUB_REPO/releases/tag/v$VERSION"
     echo "Download URL: $GITHUB_DOWNLOAD_URL"
+    if [ -f "$RELEASE_DIR/appcast/appcast.xml" ]; then
+        echo "Appcast URL: $GITHUB_APPCAST_URL"
+    fi
 fi
 
 echo ""
