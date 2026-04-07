@@ -19,9 +19,15 @@ actor TerminalMessageSender {
 
         let resolvedProcess = ProcessTreeBuilder.shared.activeCodexProcess(for: session)
         let terminal = terminalTarget(for: session, resolvedProcess: resolvedProcess)
+        let resolvedTTY = session.tty ?? resolvedProcess?.tty
+
+        if let tty = resolvedTTY,
+           sendViaTTY(trimmed, tty: tty) {
+            return true
+        }
 
         if let terminal,
-           let tty = session.tty ?? resolvedProcess?.tty,
+           let tty = resolvedTTY,
            await sendDirectMessage(trimmed, to: terminal, tty: tty) {
             return true
         }
@@ -109,6 +115,26 @@ actor TerminalMessageSender {
             return String(trimmed.dropFirst(5))
         }
         return trimmed
+    }
+
+    private nonisolated func sendViaTTY(_ message: String, tty: String) -> Bool {
+        let normalizedTTY = Self.normalizeTTY(tty)
+        let deviceURL = URL(fileURLWithPath: "/dev/\(normalizedTTY)")
+
+        guard FileManager.default.isWritableFile(atPath: deviceURL.path),
+              let data = "\(message)\n".data(using: .utf8) else {
+            return false
+        }
+
+        do {
+            let handle = try FileHandle(forWritingTo: deviceURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: data)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private static let terminalScript = """
