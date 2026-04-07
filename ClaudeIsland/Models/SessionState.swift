@@ -214,8 +214,26 @@ struct SessionState: Equatable, Identifiable, Sendable {
         !toolTracker.inProgress.isEmpty || subagentState.hasActiveSubagent
     }
 
+    /// Whether any known tool is blocked on user review/approval.
+    var hasPendingReview: Bool {
+        if case .waitingForApproval = phase {
+            return true
+        }
+
+        return chatItems.contains { item in
+            if case .toolCall(let tool) = item.type {
+                return tool.status == .waitingForApproval
+            }
+            return false
+        }
+    }
+
     /// Explicit short status text for cards and notch surfaces
     var cardStatusText: String {
+        if hasPendingReview {
+            return "Needs review"
+        }
+
         switch phase {
         case .processing:
             return isWorking ? "Working" : "Processing"
