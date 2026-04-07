@@ -134,10 +134,14 @@ struct PermissionIndicatorIcon: View {
 struct ReadyForInputIndicatorIcon: View {
     let size: CGFloat
     let color: Color
+    let animated: Bool
 
-    init(size: CGFloat = 14, color: Color = TerminalColors.green) {
+    @State private var isDimmed = false
+
+    init(size: CGFloat = 14, color: Color = TerminalColors.green, animated: Bool = false) {
         self.size = size
         self.color = color
+        self.animated = animated
     }
 
     // Checkmark shape pixel positions (at 30x30 scale)
@@ -167,6 +171,47 @@ struct ReadyForInputIndicatorIcon: View {
             }
         }
         .frame(width: size, height: size)
+        .opacity(animated ? (isDimmed ? 0.35 : 1.0) : 1.0)
+        .onAppear {
+            guard animated else { return }
+            withAnimation(.easeInOut(duration: 0.7).repeatForever(autoreverses: true)) {
+                isDimmed = true
+            }
+        }
     }
 }
 
+// Pixel art "needs review" indicator icon (pause/review shape)
+struct NeedsReviewIndicatorIcon: View {
+    let size: CGFloat
+    let color: Color
+
+    init(size: CGFloat = 14, color: Color = TerminalColors.amber) {
+        self.size = size
+        self.color = color
+    }
+
+    private let pixels: [(CGFloat, CGFloat)] = [
+        (9, 7), (9, 11), (9, 15), (9, 19), (9, 23),
+        (21, 7), (21, 11), (21, 15), (21, 19), (21, 23),
+        (15, 27)
+    ]
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let scale = size / 30.0
+            let pixelSize: CGFloat = 4 * scale
+
+            for (x, y) in pixels {
+                let rect = CGRect(
+                    x: x * scale - pixelSize / 2,
+                    y: y * scale - pixelSize / 2,
+                    width: pixelSize,
+                    height: pixelSize
+                )
+                context.fill(Path(rect), with: .color(color))
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}

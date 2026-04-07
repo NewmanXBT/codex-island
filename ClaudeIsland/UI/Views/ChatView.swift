@@ -367,7 +367,11 @@ struct ChatView: View {
             return session.tty != nil
         }
 
-        return session.provider == .codex && session.pid != nil
+        guard session.provider == .codex else { return false }
+        if session.pid != nil {
+            return true
+        }
+        return ProcessTreeBuilder.shared.activeCodexProcess(for: session) != nil
     }
 
     private var inputBar: some View {
@@ -469,7 +473,8 @@ struct ChatView: View {
 
     private func focusTerminal() {
         Task {
-            if let pid = session.pid {
+            let activeProcess = ProcessTreeBuilder.shared.activeCodexProcess(for: session)
+            if let pid = activeProcess?.pid ?? session.pid {
                 _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
             } else {
                 _ = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)

@@ -18,28 +18,36 @@ actor TerminalMessageSender {
         guard !trimmed.isEmpty else { return false }
 
         let resolvedProcess = ProcessTreeBuilder.shared.activeCodexProcess(for: session)
-        guard let terminal = terminalTarget(for: session) else { return false }
+        let terminal = terminalTarget(for: session, resolvedProcess: resolvedProcess)
 
-        if let tty = session.tty ?? resolvedProcess?.tty,
+        if let terminal,
+           let tty = session.tty ?? resolvedProcess?.tty,
            await sendDirectMessage(trimmed, to: terminal, tty: tty) {
             return true
         }
 
-        if let pid = session.pid ?? resolvedProcess?.pid {
-            _ = await YabaiController.shared.focusWindow(forClaudePid: pid)
+        let focusedWindow: Bool
+        if let pid = resolvedProcess?.pid ?? session.pid {
+            focusedWindow = await YabaiController.shared.focusWindow(forClaudePid: pid)
         } else {
-            _ = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
+            focusedWindow = await YabaiController.shared.focusWindow(forWorkingDirectory: session.cwd)
         }
 
-        terminal.application.activate(options: [.activateIgnoringOtherApps])
+        if let terminal {
+            terminal.application.activate()
+        } else if !focusedWindow {
+            return false
+        }
         try? await Task.sleep(for: .milliseconds(220))
 
-        return await sendWithSystemEvents(trimmed, to: terminal)
+        if let terminal {
+            return await sendWithSystemEvents(trimmed, to: terminal)
+        }
+        return await sendWithSystemEvents(trimmed)
     }
 
-    private nonisolated func terminalTarget(for session: SessionState) -> TerminalTarget? {
-        let resolvedProcess = ProcessTreeBuilder.shared.activeCodexProcess(for: session)
-        let pid = session.pid ?? resolvedProcess?.pid
+    private nonisolated func terminalTarget(for session: SessionState, resolvedProcess: ActiveCodexProcess?) -> TerminalTarget? {
+        let pid = resolvedProcess?.pid ?? session.pid
         guard let pid else { return nil }
 
         let tree = ProcessTreeBuilder.shared.buildTree()
@@ -70,6 +78,10 @@ actor TerminalMessageSender {
 
     private func sendWithSystemEvents(_ message: String, to target: TerminalTarget) async -> Bool {
         await runAppleScript(Self.systemEventsScript, arguments: [target.bundleIdentifier, message])
+    }
+
+    private func sendWithSystemEvents(_ message: String) async -> Bool {
+        await runAppleScript(Self.genericSystemEventsScript, arguments: [message])
     }
 
     private func runAppleScript(_ script: String, arguments: [String]) async -> Bool {
@@ -149,6 +161,17 @@ actor TerminalMessageSender {
         set targetMessage to item 2 of argv
         tell application id targetBundleId to activate
         delay 0.15
+        tell application "System Events"
+            keystroke targetMessage
+            key code 36
+        end tell
+        return "ok"
+    end run
+    """
+
+    private static let genericSystemEventsScript = """
+    on run argv
+        set targetMessage to item 1 of argv
         tell application "System Events"
             keystroke targetMessage
             key code 36

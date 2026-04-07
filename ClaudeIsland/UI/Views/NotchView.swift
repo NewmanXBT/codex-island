@@ -279,15 +279,18 @@ struct NotchView: View {
                     .frame(width: closedNotchSize.width - cornerRadiusInsets.closed.top + (isBouncing ? 16 : 0))
             }
 
-            // Right side - spinner when processing/pending, checkmark when waiting for input
+            // Right side - processing/finished animate, review uses a distinct static icon
             if showClosedActivity {
-                if isProcessing || hasPendingPermission {
+                if isProcessing {
                     ProcessingSpinner()
                         .matchedGeometryEffect(id: "spinner", in: activityNamespace, isSource: showClosedActivity)
                         .frame(width: viewModel.status == .opened ? 20 : sideWidth)
+                } else if hasPendingPermission {
+                    NeedsReviewIndicatorIcon(size: 14, color: TerminalColors.amber)
+                        .matchedGeometryEffect(id: "spinner", in: activityNamespace, isSource: showClosedActivity)
+                        .frame(width: viewModel.status == .opened ? 20 : sideWidth)
                 } else if hasWaitingForInput {
-                    // Checkmark for waiting-for-input on the right side
-                    ReadyForInputIndicatorIcon(size: 14, color: TerminalColors.green)
+                    ReadyForInputIndicatorIcon(size: 14, color: TerminalColors.green, animated: true)
                         .matchedGeometryEffect(id: "spinner", in: activityNamespace, isSource: showClosedActivity)
                         .frame(width: viewModel.status == .opened ? 20 : sideWidth)
                 }
