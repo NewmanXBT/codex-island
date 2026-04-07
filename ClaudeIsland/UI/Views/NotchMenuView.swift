@@ -103,7 +103,9 @@ struct NotchMenuView: View {
                 label: "Quit",
                 isDestructive: true
             ) {
-                NSApplication.shared.terminate(nil)
+                Task { @MainActor in
+                    AppDelegate.shared?.requestFullQuit()
+                }
             }
         }
         .padding(.horizontal, 8)

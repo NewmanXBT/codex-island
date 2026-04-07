@@ -135,6 +135,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         screenObserver = nil
     }
 
+    @MainActor
+    func requestFullQuit() {
+        updateCheckTimer?.invalidate()
+        updateCheckTimer = nil
+        screenObserver = nil
+        AppBootstrapCoordinator.shared.uninstallConfiguredIntegrations()
+        Mixpanel.mainInstance().flush()
+
+        NSApplication.shared.terminate(nil)
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            exit(0)
+        }
+    }
+
     private func getOrCreateDistinctId() -> String {
         let key = "mixpanel_distinct_id"
 
