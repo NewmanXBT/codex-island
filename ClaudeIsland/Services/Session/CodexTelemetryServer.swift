@@ -248,7 +248,7 @@ final class CodexTelemetryServer {
         return CodexTelemetryUpdate(
             sessionId: sessionId,
             cwd: cwd,
-            phase: inferPhase(attributes: attributes),
+            phase: explicitPhase(attributes: attributes),
             message: truncate(message, maxLength: 140),
             messageRole: messageRole,
             toolName: toolName,
@@ -269,48 +269,30 @@ final class CodexTelemetryServer {
         return nil
     }
 
-    private func inferPhase(attributes: [String: String]) -> SessionPhase? {
-        let joined = attributes.map { "\($0.key)=\($0.value)" }.joined(separator: " ").lowercased()
-
-        if let op = firstValue(in: attributes, keys: ["codex.op", "otel.name"])?.lowercased() {
-            switch op {
-            case let value where value.contains("session_start"),
-                 let value where value.contains("prompt_submit"),
-                 let value where value.contains("reasoning"),
-                 let value where value.contains("tool_call"),
-                 let value where value.contains("tool_start"),
-                 let value where value.contains("processing"):
-                return .processing
-            case let value where value.contains("task_complete"),
-                 let value where value.contains("waiting_for_input"),
-                 let value where value.contains("idle_prompt"):
-                return .waitingForInput
-            case let value where value.contains("stop"),
-                 let value where value.contains("session_end"),
-                 let value where value.contains("ended"):
-                return .idle
-            default:
-                break
-            }
+    private func explicitPhase(attributes: [String: String]) -> SessionPhase? {
+        guard let rawStatus = firstValue(
+            in: attributes,
+            keys: ["status", "session.status", "event.status", "codex.status", "session.phase"]
+        )?.lowercased() else {
+            return nil
         }
 
-        if joined.contains("waiting_for_input") || joined.contains("idle_prompt") || joined.contains("task_complete") {
+        switch rawStatus {
+        case "waiting_for_input":
             return .waitingForInput
-        }
-        if joined.contains("ended") || joined.contains("session_end") || joined.contains("stop") {
+        case "waiting_for_approval":
+            return .waitingForInput
+        case "running_tool", "processing", "starting":
+            return .processing
+        case "compacting":
+            return .compacting
+        case "ended":
+            return .ended
+        case "idle":
             return .idle
+        default:
+            return nil
         }
-        if joined.contains("rpc.system=mcp") || joined.contains("mcp.server.name") {
-            return .processing
-        }
-        if joined.contains("approval") || joined.contains("intervention") {
-            return .waitingForInput
-        }
-        if joined.contains("tool") || joined.contains("processing") || joined.contains("reasoning") || joined.contains("prompt_submit") || joined.contains("session_start") {
-            return .processing
-        }
-
-        return nil
     }
 
     private func parseAttributeMap(from resourceOrAttributes: Any?) -> [String: String] {
@@ -510,6 +492,7 @@ struct CodexTelemetryInstaller {
         }
 
         var updated = content
+        updated = upsert(section: "features", key: "codex_hooks", value: "true", in: updated)
         updated = upsert(section: "otel", key: "metrics_exporter", value: "\"none\"", in: updated)
         updated = upsert(section: "otel", key: "log_user_prompt", value: "false", in: updated)
         updated = removeKey(section: "otel", key: "exporter", in: updated)
@@ -541,6 +524,7 @@ struct CodexTelemetryInstaller {
 
         return content.contains("[otel.exporter.otlp-http]") &&
             content.contains("[otel.trace_exporter.otlp-http]") &&
+            content.contains("codex_hooks = true") &&
             content.contains("protocol = \"json\"") &&
             content.contains("http://127.0.0.1:4318/v1/logs")
     }

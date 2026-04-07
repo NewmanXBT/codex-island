@@ -135,23 +135,26 @@ struct ToolCompletionResult: Sendable {
 extension HookEvent {
     /// Determine the target session phase based on this hook event
     nonisolated func determinePhase() -> SessionPhase {
-        // PreCompact takes priority
-        if event == "PreCompact" {
+        switch event {
+        case "PreCompact":
             return .compacting
-        }
-
-        // Permission request creates waitingForApproval state
-        if expectsResponse, let tool = tool {
+        case "PermissionRequest" where expectsResponse:
             return .waitingForApproval(PermissionContext(
                 toolUseId: toolUseId ?? "",
-                toolName: tool,
+                toolName: tool ?? "unknown",
                 toolInput: toolInput,
                 receivedAt: Date()
             ))
-        }
-
-        if event == "Notification" && notificationType == "idle_prompt" {
-            return .idle
+        case "UserPromptSubmit", "PreToolUse", "PostToolUse":
+            return .processing
+        case "Stop", "SessionStart", "SubagentStop":
+            return .waitingForInput
+        case "SessionEnd":
+            return .ended
+        case "Notification" where notificationType == "idle_prompt":
+            return .waitingForInput
+        default:
+            break
         }
 
         switch status {

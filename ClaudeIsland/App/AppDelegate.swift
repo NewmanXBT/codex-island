@@ -16,7 +16,7 @@ final class AppBootstrapCoordinator {
     }
 
     func bootstrapIntegrations() {
-        if enabledProviders.contains(.claude) {
+        if enabledProviders.contains(.claude) || enabledProviders.contains(.codex) {
             HookInstaller.installIfNeeded()
         }
         if enabledProviders.contains(.codex) {
@@ -26,7 +26,7 @@ final class AppBootstrapCoordinator {
     }
 
     func uninstallConfiguredIntegrations() {
-        if enabledProviders.contains(.claude) {
+        if enabledProviders.contains(.claude) || enabledProviders.contains(.codex) {
             HookInstaller.uninstall()
         }
         if enabledProviders.contains(.codex) {
@@ -36,8 +36,8 @@ final class AppBootstrapCoordinator {
     }
 
     func areConfiguredIntegrationsInstalled() -> Bool {
-        let claudeInstalled = !enabledProviders.contains(.claude) || HookInstaller.isInstalled()
-        let codexInstalled = !enabledProviders.contains(.codex) || CodexTelemetryInstaller.isInstalled()
+        let claudeInstalled = !enabledProviders.contains(.claude) || HookInstaller.isClaudeInstalled()
+        let codexInstalled = !enabledProviders.contains(.codex) || (HookInstaller.isCodexInstalled() && CodexTelemetryInstaller.isInstalled())
         return claudeInstalled && codexInstalled
     }
 }
