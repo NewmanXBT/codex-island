@@ -209,15 +209,20 @@ struct SessionState: Equatable, Identifiable, Sendable {
         phase.needsAttention
     }
 
+    /// Whether the session is actively running tools or subagents.
+    var isWorking: Bool {
+        !toolTracker.inProgress.isEmpty || subagentState.hasActiveSubagent
+    }
+
     /// Explicit short status text for cards and notch surfaces
     var cardStatusText: String {
         switch phase {
         case .processing:
-            return "Running now"
+            return isWorking ? "Working" : "Processing"
         case .compacting:
             return "Compacting context"
         case .waitingForInput:
-            return "Waiting for your next step"
+            return "Needs next step"
         case .waitingForApproval(let context):
             return context.toolName == "AskUserQuestion" ? "Needs your input" : "Waiting for approval"
         case .idle:
