@@ -281,7 +281,7 @@ final class CodexTelemetryServer {
         case "waiting_for_input":
             return .waitingForInput
         case "waiting_for_approval":
-            return .waitingForInput
+            return nil
         case "running_tool", "processing", "starting":
             return .processing
         case "compacting":

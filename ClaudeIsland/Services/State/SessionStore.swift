@@ -224,7 +224,12 @@ actor SessionStore {
             )
         }
 
-        if let phase = update.phase, session.phase.canTransition(to: phase) {
+        if let phase = update.phase, shouldAdoptCodexPhase(
+            current: session.phase,
+            replacement: phase,
+            replacementActivity: update.timestamp,
+            existingActivity: session.lastActivity
+        ) {
             session.phase = phase
         }
 

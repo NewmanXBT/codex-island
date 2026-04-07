@@ -121,15 +121,13 @@ actor TerminalMessageSender {
         let normalizedTTY = Self.normalizeTTY(tty)
         let deviceURL = URL(fileURLWithPath: "/dev/\(normalizedTTY)")
 
-        guard FileManager.default.isWritableFile(atPath: deviceURL.path),
-              let data = "\(message)\n".data(using: .utf8) else {
+        guard let data = "\(message)\r".data(using: .utf8) else {
             return false
         }
 
         do {
             let handle = try FileHandle(forWritingTo: deviceURL)
             defer { try? handle.close() }
-            try handle.seekToEnd()
             try handle.write(contentsOf: data)
             return true
         } catch {
