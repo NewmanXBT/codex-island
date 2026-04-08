@@ -36,4 +36,11 @@ class WindowManager {
 
         return windowController
     }
+
+    func tearDown() {
+        guard let existingController = windowController else { return }
+        existingController.window?.orderOut(nil)
+        existingController.close()
+        windowController = nil
+    }
 }

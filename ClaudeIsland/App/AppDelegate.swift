@@ -1,6 +1,7 @@
 import AppKit
 import IOKit
 import Mixpanel
+import os.log
 import Sparkle
 import SwiftUI
 
@@ -25,12 +26,18 @@ final class AppBootstrapCoordinator {
         }
     }
 
+    func stopRuntimeServices() {
+        if enabledProviders.contains(.codex) {
+            CodexTelemetryServer.shared.stop()
+        }
+    }
+
     func uninstallConfiguredIntegrations() {
+        stopRuntimeServices()
         if enabledProviders.contains(.claude) || enabledProviders.contains(.codex) {
             HookInstaller.uninstall()
         }
         if enabledProviders.contains(.codex) {
-            CodexTelemetryServer.shared.stop()
             CodexTelemetryInstaller.uninstall()
         }
     }
@@ -43,6 +50,15 @@ final class AppBootstrapCoordinator {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private enum QuitIntentKeys {
+        static let timestamp = "app.quitIntent.timestamp"
+        static let bundleID = "app.quitIntent.bundleID"
+        static let executablePath = "app.quitIntent.executablePath"
+    }
+
+    private let logger = Logger(subsystem: "com.claudeisland", category: "AppLifecycle")
+    private let relaunchSuppressionWindow: TimeInterval = 4
+    private let legacyBundleIdentifiers = ["com.celestial.ClaudeIsland"]
     private var windowManager: WindowManager?
     private var screenObserver: ScreenObserver?
     private var updateCheckTimer: Timer?
@@ -74,10 +90,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if shouldSuppressUnexpectedRelaunch() {
+            logger.notice("Suppressing immediate relaunch after user-requested quit")
+            NSApplication.shared.terminate(nil)
+            DispatchQueue.main.async {
+                exit(0)
+            }
+            return
+        }
+
+        terminateLegacyInstances()
+
         if !ensureSingleInstance() {
             NSApplication.shared.terminate(nil)
             return
         }
+
+        clearQuitIntent()
 
         Mixpanel.initialize(token: "49814c1436104ed108f3fc4735228496")
 
@@ -132,15 +161,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         Mixpanel.mainInstance().flush()
         updateCheckTimer?.invalidate()
+        updateCheckTimer = nil
         screenObserver = nil
+        windowManager?.tearDown()
+        windowManager = nil
+        AppBootstrapCoordinator.shared.stopRuntimeServices()
     }
 
     @MainActor
     func requestFullQuit() {
+        recordQuitIntent()
         updateCheckTimer?.invalidate()
         updateCheckTimer = nil
         screenObserver = nil
-        AppBootstrapCoordinator.shared.uninstallConfiguredIntegrations()
+        windowManager?.tearDown()
+        windowManager = nil
+        AppBootstrapCoordinator.shared.stopRuntimeServices()
         Mixpanel.mainInstance().flush()
 
         NSApplication.shared.terminate(nil)
@@ -241,5 +277,63 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         return true
+    }
+
+    private func recordQuitIntent() {
+        let defaults = UserDefaults.standard
+        defaults.set(Date().timeIntervalSince1970, forKey: QuitIntentKeys.timestamp)
+        defaults.set(Bundle.main.bundleIdentifier, forKey: QuitIntentKeys.bundleID)
+        defaults.set(Bundle.main.executablePath, forKey: QuitIntentKeys.executablePath)
+        logger.notice("Recorded quit intent for bundle \(Bundle.main.bundleIdentifier ?? "unknown", privacy: .public)")
+    }
+
+    private func clearQuitIntent() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: QuitIntentKeys.timestamp)
+        defaults.removeObject(forKey: QuitIntentKeys.bundleID)
+        defaults.removeObject(forKey: QuitIntentKeys.executablePath)
+    }
+
+    private func shouldSuppressUnexpectedRelaunch() -> Bool {
+        let defaults = UserDefaults.standard
+        guard let timestamp = defaults.object(forKey: QuitIntentKeys.timestamp) as? Double else {
+            return false
+        }
+
+        let quitAge = Date().timeIntervalSince1970 - timestamp
+        guard quitAge >= 0, quitAge <= relaunchSuppressionWindow else {
+            clearQuitIntent()
+            return false
+        }
+
+        let recordedBundleID = defaults.string(forKey: QuitIntentKeys.bundleID)
+        let recordedExecutablePath = defaults.string(forKey: QuitIntentKeys.executablePath)
+        let currentBundleID = Bundle.main.bundleIdentifier
+        let currentExecutablePath = Bundle.main.executablePath
+
+        let matchesCurrentIdentity = recordedBundleID == currentBundleID &&
+            recordedExecutablePath == currentExecutablePath
+
+        if matchesCurrentIdentity {
+            logger.notice("Detected relaunch \(quitAge, privacy: .public)s after quit for \(currentBundleID ?? "unknown", privacy: .public)")
+            clearQuitIntent()
+            return true
+        }
+
+        clearQuitIntent()
+        return false
+    }
+
+    private func terminateLegacyInstances() {
+        let runningApps = NSWorkspace.shared.runningApplications
+        for legacyBundleID in legacyBundleIdentifiers {
+            let legacyApps = runningApps.filter { $0.bundleIdentifier == legacyBundleID }
+            guard !legacyApps.isEmpty else { continue }
+
+            logger.notice("Terminating \(legacyApps.count, privacy: .public) legacy app instance(s) for \(legacyBundleID, privacy: .public)")
+            for app in legacyApps {
+                _ = app.terminate()
+            }
+        }
     }
 }
